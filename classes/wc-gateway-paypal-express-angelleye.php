@@ -10,6 +10,7 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
     public static $log = false;
     public $checkout_fields;
     public $posted;
+    public $force_show_api_field = false;
 
     public function __construct() {
         $this->id = 'paypal_express';
@@ -182,6 +183,11 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
     }
 
     public function admin_options() {
+        $pfw_connect_with_paypal_error = get_option('pfw_connect_with_paypal_error', '');
+        if( !empty($pfw_connect_with_paypal_error) ) {
+            echo $pfw_connect_with_paypal_error;
+            delete_option('pfw_connect_with_paypal_error');
+        }
         ?>
         <h3><?php _e('PayPal Express Checkout', 'paypal-for-woocommerce'); ?></h3>
         <p><?php _e($this->method_description, 'paypal-for-woocommerce'); ?></p>
@@ -407,7 +413,11 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
                 production = jQuery('#woocommerce_paypal_express_api_username, #woocommerce_paypal_express_api_password, #woocommerce_paypal_express_api_signature').closest('tr');
                 if (jQuery(this).is(':checked')) {
                     if (jQuery('#woocommerce_paypal_express_sandbox_api_username').val().length === 0 && jQuery('#woocommerce_paypal_express_sandbox_api_password').val().length === 0 && jQuery('#woocommerce_paypal_express_sandbox_api_signature').val().length === 0) {
-                        sandbox.hide();
+                        <?php if($this->force_show_api_field == false) { ?>
+                         sandbox.hide();
+                        <?php } else { ?>
+                            sandbox.show();
+                        <?php } ?>
                     } else {
                         sandbox.show();
                     }
@@ -423,7 +433,11 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
                     jQuery('#woocommerce_paypal_express_api_details').show();
                     jQuery('#woocommerce_paypal_express_api_details').next('p').show();
                     if (jQuery('#woocommerce_paypal_express_api_username').val().length === 0 && jQuery('#woocommerce_paypal_express_api_password').val().length === 0 && jQuery('#woocommerce_paypal_express_api_signature').val().length === 0) {
+                        <?php if($this->force_show_api_field == false) { ?>
                         production.hide();
+                        <?php } { ?>
+                            production.show();
+                        <?php } ?>
                     } else {
                         production.show();
                     }
@@ -2399,6 +2413,115 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
         $this->send_items = 'yes' === $this->send_items_value;
     }
 
+    public function angelleye_get_isu_paypal_url($sandbox = null) {
+            $is_display = false;
+            $html = '';
+            try {
+                if( $this->angelleye_ips_supported() == false ) {
+                    return false;
+                }
+                if($sandbox == true) {
+                    if( ( !isset($this->settings['sandbox_api_username']) || isset($this->settings['sandbox_api_username']) && empty($this->settings['sandbox_api_username']) )
+                    || 
+                    ( !isset($this->settings['sandbox_api_password']) || isset($this->settings['sandbox_api_password']) && empty($this->settings['sandbox_api_password']) )
+                    ||
+                    ( !isset($this->settings['sandbox_api_signature']) || isset($this->settings['sandbox_api_signature']) && empty($this->settings['sandbox_api_signature']) )
+                    ) {
+                        $is_display = true;
+                    } else {
+                        $is_display = false;
+                    }
+                } else {
+                    if( ( !isset($this->settings['api_username']) || isset($this->settings['api_username']) && empty($this->settings['api_username']) )
+                    || 
+                    ( !isset($this->settings['api_password']) || isset($this->settings['api_password']) && empty($this->settings['api_password']) )
+                    ||
+                    ( !isset($this->settings['api_signature']) || isset($this->settings['api_signature']) && empty($this->settings['api_signature']) )
+                    ) {
+                        $is_display = true;
+                    } else {
+                        $is_display = false;
+                    }
+                }
+                if($is_display == false) {
+                    return false;
+                }
+                $postData = array( 'sandbox' => ($sandbox) ? 'true' : 'false', 'api' => 'connect_to_paypal', 'return_url' => add_query_arg( array( 'pp_action' => 'angelleye_get_account_detail', 'sandbox' => ($sandbox) ? 'true' : 'false'), WC()->api_request_url('WC_Gateway_PayPal_Express_AngellEYE') ));                                        
+                $this->log('Connect With PayPal RequestData : ' . print_r($postData, true));
+                $response = wp_remote_post( PAYPAL_FOR_WOOCOMMERCE_ISU_URL, array(
+                        'method' => 'POST',
+                        'timeout' => 45,
+                        'redirection' => 5,
+                        'httpversion' => '1.0',
+                        'blocking' => true,
+                        'headers' => array('Content-Type' => 'application/x-www-form-urlencoded'),
+                        'body' => $postData,
+                        'cookies' => array()
+                    )
+                );
+                if ( is_wp_error( $response ) ) {
+                    $error_message = $response->get_error_message();
+                    $html .= "Something went wrong: $error_message";
+                } else {
+                    $this->force_show_api_field = true;
+                    $ConnectPayPalArray = json_decode( wp_remote_retrieve_body( $response ), true );
+                    $this->log('Connect With PayPal ResponseData : ' . print_r($ConnectPayPalArray, true));
+                    if ($ConnectPayPalArray['ACK'] == 'success') {
+                            $html .= '<a id="pfw_connect_with_paypal" href="'. $ConnectPayPalArray['action_url'] .'" class="btn btn-primary"><img src="https://www.paypalobjects.com/webstatic/en_US/developer/docs/lipp/loginwithpaypalbutton.png" alt="Login with PayPal" style="cursor: pointer"></a>';
+                            $html .= '<span class="angelleye_paypal_woo_setting_sepraer">OR</span><a href="#" class="angelleye_paypal_woo_connect_toggle">Add my own app credentials</a>';
+                    } else {                   
+                        if(is_string($ConnectPayPalArray['DATA'])){
+                            $error = json_decode($ConnectPayPalArray['DATA'], true);
+                        }
+                        else{
+                            $error = array();
+                        }                                                    
+                        if(isset($error['error']) || isset($error['error_description'])) {                                                                                                            
+                            $error_message = '<div class="notice notice-error connect_with_paypal_error">'
+                                    . '<p>' . __("PayPal Error","paypal-for-woocommerce") . '</p>'
+                                    . '<p id="connect_with_paypal_error_p">' . __('Error Code : ','paypal-for-woocommerce') . isset($error['error']) ? $error['error'] : '' . '</p>'
+                                    . '<p id="connect_with_paypal_error_desc">' . __('Error Details : ','paypal-for-woocommerce') . isset($error['error_description']) ? $error['error_description'] : '' . '</p>'
+                                    . '</div>';
+                            update_option('pfw_connect_with_paypal_error', $error_message);
+                         }
+                        if(isset($ConnectPayPalArray['DATA']['RAWRESPONSE']['name']) || isset($ConnectPayPalArray['DATA']['RAWRESPONSE']['message'])){
+                            $error_message = '<div class="notice notice-error connect_with_paypal_error">'
+                                    . '<p>' . __('PayPal Error','paypal-for-woocommerce') . '</p>'
+                                    . '<p id="connect_with_paypal_error_p">' . __('Error Code : ','paypal-for-woocommerce') . $ConnectPayPalArray['DATA']['RAWRESPONSE']['name'] . '</p>'
+                                    . '<p id="connect_with_paypal_error_desc">' . __('Error Details : ','paypal-for-woocommerce') . $ConnectPayPalArray['DATA']['RAWRESPONSE']['message'] . '</p>'
+                                 . '</div>';
+                            update_option('pfw_connect_with_paypal_error', $error_message);
+                        }
+                    }
+                }
+                return $html;
+            } catch (Exception $ex) {
+
+            }
+        }
+        
+        public function angelleye_ips_supported() {
+            $_supported_countries = array(
+		'AL', 'DZ', 'AO', 'AI', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ', 'BS',
+		'BH', 'BB', 'BE', 'BZ', 'BJ', 'BM', 'BT', 'BO', 'BA', 'BW', 'VG', 'BN',
+		'BG', 'BF', 'BI', 'KH', 'CA', 'CV', 'KY', 'TD', 'CL', 'CN', 'C2', 'CO',
+		'KM', 'CG', 'CK', 'CR', 'HR', 'CY', 'CZ', 'CD', 'DK', 'DJ', 'DM', 'DO',
+		'EC', 'EG', 'SV', 'ER', 'EE', 'ET', 'FK', 'FM', 'FJ', 'FI', 'FR', 'GF',
+		'PF', 'GA', 'GM', 'GE', 'DE', 'GI', 'GR', 'GL', 'GD', 'GP', 'GU', 'GT',
+		'GN', 'GW', 'GY', 'VA', 'HN', 'HK', 'HU', 'IS', 'ID', 'IE', 'IT', 'JM',
+		'JO', 'KZ', 'KE', 'KI', 'KW', 'KG', 'LA', 'LV', 'LS', 'LI', 'LT', 'LU',
+		'MG', 'MW', 'MY', 'MV', 'ML', 'MT', 'MH', 'MQ', 'MR', 'MU', 'YT', 'MX',
+		'MN', 'MS', 'MA', 'MZ', 'NA', 'NR', 'NP', 'NL', 'AN', 'NC', 'NZ', 'NI',
+		'NE', 'NU', 'NF', 'NO', 'OM', 'PW', 'PA', 'PG', 'PE', 'PH', 'PN', 'PL',
+		'PT', 'QA', 'RE', 'RO', 'RU', 'RW', 'SH', 'KN', 'LC', 'PM', 'VC', 'WS',
+		'SM', 'ST', 'SA', 'SN', 'RS', 'SC', 'SL', 'SG', 'SK', 'SI', 'SB', 'SO',
+		'ZA', 'KR', 'ES', 'LK', 'SR', 'SJ', 'SZ', 'SE', 'CH', 'TW', 'TJ', 'TH',
+		'TG', 'TO', 'TT', 'TN', 'TR', 'TM', 'TC', 'TV', 'UG', 'UA', 'AE', 'GB',
+		'TZ', 'US', 'UY', 'VU', 'VE', 'VN', 'WF', 'YE', 'ZM',
+            );
+            return in_array( WC()->countries->get_base_country(), $_supported_countries );
+        }
+
     public function subscription_change_payment($order_id) {
         if (isset($_POST['wc-paypal_express-payment-token']) && 'new' !== $_POST['wc-paypal_express-payment-token']) {
             $this->angelleye_reload_gateway_credentials_for_woo_subscription_renewal_order($order);
@@ -2492,112 +2615,6 @@ class WC_Gateway_PayPal_Express_AngellEYE extends WC_Payment_Gateway {
             }
         }
     }
-    
-    public function angelleye_get_isu_paypal_url($sandbox = null) {
-            $is_display = false;
-            $html = '';
-            try {
-                if( $this->angelleye_ips_supported() == false ) {
-                    return false;
-                }
-                if($sandbox == true) {
-                    if( ( !isset($this->settings['sandbox_api_username']) || isset($this->settings['sandbox_api_username']) && empty($this->settings['sandbox_api_username']) )
-                    || 
-                    ( !isset($this->settings['sandbox_api_password']) || isset($this->settings['sandbox_api_password']) && empty($this->settings['sandbox_api_password']) )
-                    ||
-                    ( !isset($this->settings['sandbox_api_signature']) || isset($this->settings['sandbox_api_signature']) && empty($this->settings['sandbox_api_signature']) )
-                    ) {
-                        $is_display = true;
-                    } else {
-                        $is_display = false;
-                    }
-                } else {
-                    if( ( !isset($this->settings['api_username']) || isset($this->settings['api_username']) && empty($this->settings['api_username']) )
-                    || 
-                    ( !isset($this->settings['api_password']) || isset($this->settings['api_password']) && empty($this->settings['api_password']) )
-                    ||
-                    ( !isset($this->settings['api_signature']) || isset($this->settings['api_signature']) && empty($this->settings['api_signature']) )
-                    ) {
-                        $is_display = true;
-                    } else {
-                        $is_display = false;
-                    }
-                }
-                if($is_display == false) {
-                    return false;
-                }
-                $postData = array( 'sandbox' => ($sandbox) ? 'true' : 'false', 'api' => 'connect_to_paypal', 'return_url' => add_query_arg( array( 'pp_action' => 'angelleye_get_account_detail', 'sandbox' => ($sandbox) ? 'true' : 'false'), WC()->api_request_url('WC_Gateway_PayPal_Express_AngellEYE') ));                                        
-                $this->log('Connect With PayPal RequestData : ' . print_r($postData, true));
-                $response = wp_remote_post( PAYPAL_FOR_WOOCOMMERCE_ISU_URL, array(
-                        'method' => 'POST',
-                        'timeout' => 45,
-                        'redirection' => 5,
-                        'httpversion' => '1.0',
-                        'blocking' => true,
-                        'headers' => array('Content-Type' => 'application/x-www-form-urlencoded'),
-                        'body' => $postData,
-                        'cookies' => array()
-                    )
-                );
-                if ( is_wp_error( $response ) ) {
-                    $error_message = $response->get_error_message();
-                    $html .= "Something went wrong: $error_message";
-                } else {
-                    $ConnectPayPalArray = json_decode( wp_remote_retrieve_body( $response ), true );
-                    $this->log('Connect With PayPal ResponseData : ' . print_r($ConnectPayPalArray, true));
-                    if ($ConnectPayPalArray['ACK'] == 'success') {
-                            $html .= '<a id="pfw_connect_with_paypal" href="'. $ConnectPayPalArray['action_url'] .'" class="btn btn-primary"><img src="https://www.paypalobjects.com/webstatic/en_US/developer/docs/lipp/loginwithpaypalbutton.png" alt="Login with PayPal" style="cursor: pointer"></a>';
-                            $html .= '<span class="angelleye_paypal_woo_setting_sepraer">OR</span><a href="#" class="angelleye_paypal_woo_connect_toggle">Add my own app credentials</a>';
-                    } else {                   
-                        if(is_string($ConnectPayPalArray['DATA'])){
-                            $error = json_decode($ConnectPayPalArray['DATA'], true);
-                        }
-                        else{
-                            $error = array();
-                        }                                                    
-                        if(isset($error['error']) || isset($error['error_description'])) {                                                                                                            
-                            $html .= '<div class="alert alert-warning" id="connect_with_paypal_error">'
-                                    . '<p>' . __("PayPal Error","paypal-for-woocommerce") . '</p>'
-                                    . '<p id="connect_with_paypal_error_p">' . __('Error :','paypal-for-woocommerce') . isset($error['error']) ? $error['error'] : '' . '</p>'
-                                    . '<p id="connect_with_paypal_error_desc">' . __('Error :','paypal-for-woocommerce') . isset($error['error_description']) ? $error['error_description'] : '' . '</p>'
-                                    . '</div>';
 
-                            if(isset($ConnectPayPalArray['DATA']['RAWRESPONSE']['name']) || isset($ConnectPayPalArray['DATA']['RAWRESPONSE']['message'])){
-                                $html .= '<div class="alert alert-warning" id="connect_with_paypal_error">'
-                                    . '<p>' . __('PayPal Error','paypal-for-woocommerce') . '</p>'
-                                    . '<p id="connect_with_paypal_error_p">' . __('Error :','paypal-for-woocommerce') . $ConnectPayPalArray['DATA']['RAWRESPONSE']['name'] . '</p>'
-                                    . '<p id="connect_with_paypal_error_desc">' . __('Error :','paypal-for-woocommerce') . $ConnectPayPalArray['DATA']['RAWRESPONSE']['message'] . '</p>'
-                                 . '</div>';
 
-                            }
-                        }
-                    }
-                }
-                return $html;
-            } catch (Exception $ex) {
-
-            }
-        }
-        
-        public function angelleye_ips_supported() {
-            $_supported_countries = array(
-		'AL', 'DZ', 'AO', 'AI', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ', 'BS',
-		'BH', 'BB', 'BE', 'BZ', 'BJ', 'BM', 'BT', 'BO', 'BA', 'BW', 'VG', 'BN',
-		'BG', 'BF', 'BI', 'KH', 'CA', 'CV', 'KY', 'TD', 'CL', 'CN', 'C2', 'CO',
-		'KM', 'CG', 'CK', 'CR', 'HR', 'CY', 'CZ', 'CD', 'DK', 'DJ', 'DM', 'DO',
-		'EC', 'EG', 'SV', 'ER', 'EE', 'ET', 'FK', 'FM', 'FJ', 'FI', 'FR', 'GF',
-		'PF', 'GA', 'GM', 'GE', 'DE', 'GI', 'GR', 'GL', 'GD', 'GP', 'GU', 'GT',
-		'GN', 'GW', 'GY', 'VA', 'HN', 'HK', 'HU', 'IS', 'ID', 'IE', 'IT', 'JM',
-		'JO', 'KZ', 'KE', 'KI', 'KW', 'KG', 'LA', 'LV', 'LS', 'LI', 'LT', 'LU',
-		'MG', 'MW', 'MY', 'MV', 'ML', 'MT', 'MH', 'MQ', 'MR', 'MU', 'YT', 'MX',
-		'MN', 'MS', 'MA', 'MZ', 'NA', 'NR', 'NP', 'NL', 'AN', 'NC', 'NZ', 'NI',
-		'NE', 'NU', 'NF', 'NO', 'OM', 'PW', 'PA', 'PG', 'PE', 'PH', 'PN', 'PL',
-		'PT', 'QA', 'RE', 'RO', 'RU', 'RW', 'SH', 'KN', 'LC', 'PM', 'VC', 'WS',
-		'SM', 'ST', 'SA', 'SN', 'RS', 'SC', 'SL', 'SG', 'SK', 'SI', 'SB', 'SO',
-		'ZA', 'KR', 'ES', 'LK', 'SR', 'SJ', 'SZ', 'SE', 'CH', 'TW', 'TJ', 'TH',
-		'TG', 'TO', 'TT', 'TN', 'TR', 'TM', 'TC', 'TV', 'UG', 'UA', 'AE', 'GB',
-		'TZ', 'US', 'UY', 'VU', 'VE', 'VN', 'WF', 'YE', 'ZM',
-            );
-            return in_array( WC()->countries->get_base_country(), $_supported_countries );
-        }
 }
